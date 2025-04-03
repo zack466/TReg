@@ -18,6 +18,10 @@ from solver.latent_diffusion import get_solver
 from utils.img_util import draw_img
 from utils.log_util import Logger
 
+from monai.metrics import PSNRMetric, SSIMMetric
+from taming.modules.losses.lpips import LPIPS
+import json
+
 # suppress warning message from CLIP
 logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
 
@@ -157,9 +161,16 @@ def main():
                         target=args.target)
 
     # load operator
+    # NOTE: the degradation operators don't seem to add any noise?
     operator = get_degradation(name=task_conf.name,
                                device=args.device,
                                deg_config=task_conf.params) 
+    
+    metrics = {
+        'psnr': PSNRMetric(max_val=1),
+        'ssim': SSIMMetric(spatial_dims=2),
+        'lpips': LPIPS().to(args.device).eval(),
+    }
 
     # run solver
     for i, img in enumerate(loader):
@@ -170,7 +181,8 @@ def main():
         img = (img - 0.5) / 0.5
         y = operator.A(img)
         noise = torch.randn_like(y).to(args.device)
-        y = y + 0.01 * noise
+        # NOTE: noise is added here instead
+        y = y + task_conf.params.noise_scale * noise
 
         fname = str(i).zfill(5) + f'-{args.prompt}.png'
         draw_img(reshape_y(operator.At(y)), args.workdir.joinpath('input', fname))
@@ -189,6 +201,17 @@ def main():
         draw_img(img * 2 + 0.5, args.workdir.joinpath('label', fname))
         draw_img(solution, args.workdir.joinpath('recon', fname))
         draw_img(reshape_y(operator.At(operator.A(solution.to(args.device)))), args.workdir.joinpath('ypred', fname))
+
+        # collect metrics on solution
+        metric_log = {}
+        for name, metric in metrics.items():
+            # images should be passed into metrics with values in range [0, 1]
+            normalized = (solution - solution.min()) / (max(solution.max() - solution.min(), 1e-5))
+            metric_log[name].append(metric(normalized, img * 2 + 0.5).item())
+
+        # dump metrics to file
+        with open(args.workdir.joinpath('metrics', fname + ".txt"), 'w') as f:
+            json.dump(metric_log, f)
 
 
 if __name__ == '__main__':
