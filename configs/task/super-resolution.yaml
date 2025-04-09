@@ -6,4 +6,4 @@ params:
   image_size: 512
   deg_scale: 16
   noise: 'gaussian'
-  noise_scale: 0.05
+  noise_scale: 0.01

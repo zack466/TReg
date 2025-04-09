@@ -18,9 +18,11 @@ from solver.latent_diffusion import get_solver
 from utils.img_util import draw_img
 from utils.log_util import Logger
 
+from collections import defaultdict
 from monai.metrics import PSNRMetric, SSIMMetric
 from taming.modules.losses.lpips import LPIPS
 import json
+import os
 
 # suppress warning message from CLIP
 logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
@@ -203,13 +205,16 @@ def main():
         draw_img(reshape_y(operator.At(operator.A(solution.to(args.device)))), args.workdir.joinpath('ypred', fname))
 
         # collect metrics on solution
-        metric_log = {}
+        metric_log = defaultdict(lambda: [])
+        normalized = ((solution - solution.min()) / (max(solution.max() - solution.min(), 1e-5))).to(args.device)
+        img_rescaled = (img + 1.0) / 2.0
         for name, metric in metrics.items():
             # images should be passed into metrics with values in range [0, 1]
-            normalized = (solution - solution.min()) / (max(solution.max() - solution.min(), 1e-5))
-            metric_log[name].append(metric(normalized, img * 2 + 0.5).item())
+            metric_log[name].append(metric(normalized, img_rescaled).item())
 
         # dump metrics to file
+        if not os.path.exists(args.workdir.joinpath('metrics')):
+            os.mkdir(args.workdir.joinpath('metrics'))
         with open(args.workdir.joinpath('metrics', fname + ".txt"), 'w') as f:
             json.dump(metric_log, f)
 
